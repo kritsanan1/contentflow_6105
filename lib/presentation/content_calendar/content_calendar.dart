@@ -3,6 +3,8 @@ import 'package:flutter/services.dart';
 import 'package:sizer/sizer.dart';
 
 import '../../core/app_export.dart';
+import '../../data/models/social_media_post.dart';
+import '../../data/services/social_media_service_factory.dart';
 import '../../widgets/custom_app_bar.dart';
 import '../../widgets/custom_bottom_bar.dart';
 import '../../widgets/custom_icon_widget.dart';
@@ -30,8 +32,9 @@ class _ContentCalendarState extends State<ContentCalendar>
   late AnimationController _animationController;
   late Animation<double> _fadeAnimation;
 
-  // Mock data for scheduled posts
-  final List<Map<String, dynamic>> _scheduledPosts = [
+  List<SocialMediaPost> _scheduledPosts = [];
+
+  final List<Map<String, dynamic>> _mockScheduledPosts = [
     {
       "id": 1,
       "title": "เปิดตัวผลิตภัณฑ์ใหม่ล่าสุด",
@@ -161,6 +164,35 @@ class _ContentCalendarState extends State<ContentCalendar>
       curve: Curves.easeInOut,
     ));
     _animationController.forward();
+    _loadPosts();
+  }
+
+  Future<void> _loadPosts() async {
+    try {
+      final List<SocialMediaPost> allPlatformPosts = [];
+
+      for (final platform in ['facebook', 'instagram']) {
+        if (SocialMediaServiceFactory.isPlatformSupported(platform)) {
+          try {
+            final service = SocialMediaServiceFactory.getService(platform);
+            final posts = await service.getPosts(limit: 100);
+            allPlatformPosts.addAll(posts);
+          } catch (e) {
+            print('Error loading posts from $platform: $e');
+          }
+        }
+      }
+
+      allPlatformPosts.sort((a, b) => a.scheduledDate.compareTo(b.scheduledDate));
+
+      if (mounted) {
+        setState(() {
+          _scheduledPosts = allPlatformPosts;
+        });
+      }
+    } catch (e) {
+      print('Error loading posts: $e');
+    }
   }
 
   @override
@@ -251,11 +283,7 @@ class _ContentCalendarState extends State<ContentCalendar>
 
   Future<void> _handleRefresh() async {
     HapticFeedback.lightImpact();
-    // Simulate API refresh
-    await Future.delayed(const Duration(seconds: 1));
-    setState(() {
-      // Refresh data here
-    });
+    await _loadPosts();
   }
 
   void _toggleView() {
@@ -303,11 +331,12 @@ class _ContentCalendarState extends State<ContentCalendar>
 
   List<Map<String, dynamic>> _getFilteredPosts() {
     if (_selectedPlatforms.contains('ทั้งหมด')) {
-      return _scheduledPosts;
+      return _scheduledPosts.map((post) => post.toMap()).toList();
     }
-    return _scheduledPosts.where((post) {
-      return _selectedPlatforms.contains(post['platform']);
-    }).toList();
+    return _scheduledPosts
+        .where((post) => _selectedPlatforms.contains(post.platform))
+        .map((post) => post.toMap())
+        .toList();
   }
 
   void _handleDaySelected(DateTime selectedDay, DateTime focusedDay) {
@@ -395,14 +424,33 @@ class _ContentCalendarState extends State<ContentCalendar>
             child: Text('ยกเลิก'),
           ),
           ElevatedButton(
-            onPressed: () {
+            onPressed: () async {
               Navigator.pop(context);
-              setState(() {
-                _scheduledPosts.removeWhere((p) => p['id'] == post['id']);
-              });
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text('ลบโพสต์เรียบร้อยแล้ว')),
-              );
+              try {
+                final postId = post['id'].toString();
+                final platform = post['platform'].toString().toLowerCase();
+
+                if (SocialMediaServiceFactory.isPlatformSupported(platform)) {
+                  final service = SocialMediaServiceFactory.getService(platform);
+                  await service.deletePost(postId);
+                }
+
+                setState(() {
+                  _scheduledPosts.removeWhere((p) => p.id == postId);
+                });
+
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('ลบโพสต์เรียบร้อยแล้ว')),
+                  );
+                }
+              } catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('เกิดข้อผิดพลาดในการลบโพสต์: $e')),
+                  );
+                }
+              }
             },
             style: ElevatedButton.styleFrom(
               backgroundColor: Theme.of(context).colorScheme.error,

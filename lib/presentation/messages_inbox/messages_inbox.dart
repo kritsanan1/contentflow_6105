@@ -3,6 +3,9 @@ import 'package:flutter/services.dart';
 import 'package:sizer/sizer.dart';
 
 import '../../core/app_export.dart';
+import '../../core/config/api_config.dart';
+import '../../data/models/social_media_message.dart';
+import '../../data/services/social_media_service_factory.dart';
 import '../../widgets/custom_app_bar.dart';
 import '../../widgets/custom_bottom_bar.dart';
 import '../../widgets/custom_icon_widget.dart';
@@ -31,80 +34,25 @@ class _MessagesInboxState extends State<MessagesInbox>
   bool _isLoading = false;
   bool _isRefreshing = false;
 
-  // Mock data for messages
-  final List<Map<String, dynamic>> _allMessages = [
-    {
-      'id': '1',
-      'platform': 'facebook',
-      'senderName': 'สมชาย ใจดี',
-      'messageText':
-          'สวัสดีครับ ผมสนใจสินค้าของคุณมากครับ สามารถให้รายละเอียดเพิ่มเติมได้ไหมครับ',
-      'timestamp': DateTime.now().subtract(const Duration(minutes: 15)),
-      'isUnread': true,
-      'avatarUrl':
-          'https://cdn.pixabay.com/photo/2015/03/04/22/35/avatar-659652_640.png',
-    },
-    {
-      'id': '2',
-      'platform': 'instagram',
-      'senderName': 'มาลี สวยงาม',
-      'messageText': 'รูปนี้สวยมากค่ะ ถ่ายที่ไหนคะ? 😍',
-      'timestamp': DateTime.now().subtract(const Duration(hours: 2)),
-      'isUnread': true,
-      'avatarUrl':
-          'https://cdn.pixabay.com/photo/2015/03/04/22/35/avatar-659652_640.png',
-    },
-    {
-      'id': '3',
-      'platform': 'twitter',
-      'senderName': 'Tech Lover',
-      'messageText': 'Great post about AI! Can you share more insights?',
-      'timestamp': DateTime.now().subtract(const Duration(hours: 4)),
-      'isUnread': false,
-      'avatarUrl':
-          'https://cdn.pixabay.com/photo/2015/03/04/22/35/avatar-659652_640.png',
-    },
-    {
-      'id': '4',
-      'platform': 'linkedin',
-      'senderName': 'จันทร์เพ็ญ ธุรกิจดี',
-      'messageText':
-          'ขอบคุณสำหรับการแชร์ข้อมูลที่มีประโยชน์ค่ะ อยากจะเชื่อมต่อเครือข่ายด้วยค่ะ',
-      'timestamp': DateTime.now().subtract(const Duration(days: 1)),
-      'isUnread': false,
-      'avatarUrl':
-          'https://cdn.pixabay.com/photo/2015/03/04/22/35/avatar-659652_640.png',
-    },
-    {
-      'id': '5',
-      'platform': 'youtube',
-      'senderName': 'วิดีโอเลิฟเวอร์',
-      'messageText': 'วิดีโอนี้ดีมากครับ รอตอนต่อไปเลยครับ! 👍',
-      'timestamp': DateTime.now().subtract(const Duration(days: 2)),
-      'isUnread': false,
-      'avatarUrl':
-          'https://cdn.pixabay.com/photo/2015/03/04/22/35/avatar-659652_640.png',
-    },
-  ];
+  List<SocialMediaMessage> _allMessages = [];
 
-  List<Map<String, dynamic>> get _filteredMessages {
-    List<Map<String, dynamic>> filtered = _allMessages;
+  List<SocialMediaMessage> get _filteredMessages {
+    List<SocialMediaMessage> filtered = _allMessages;
 
     // Filter by platform
     if (_selectedPlatform != 'all') {
       filtered = filtered
           .where((message) =>
-              (message['platform'] as String).toLowerCase() ==
-              _selectedPlatform.toLowerCase())
+              message.platform.toLowerCase() == _selectedPlatform.toLowerCase())
           .toList();
     }
 
     // Filter by search query
     if (_searchQuery.isNotEmpty) {
       filtered = filtered.where((message) {
-        final senderName = (message['senderName'] as String).toLowerCase();
-        final messageText = (message['messageText'] as String).toLowerCase();
-        final platform = (message['platform'] as String).toLowerCase();
+        final senderName = message.senderName.toLowerCase();
+        final messageText = message.messageText.toLowerCase();
+        final platform = message.platform.toLowerCase();
         final query = _searchQuery.toLowerCase();
 
         return senderName.contains(query) ||
@@ -132,19 +80,42 @@ class _MessagesInboxState extends State<MessagesInbox>
   Future<void> _loadMessages() async {
     setState(() => _isLoading = true);
 
-    // Simulate API call
-    await Future.delayed(const Duration(milliseconds: 800));
+    try {
+      final List<SocialMediaMessage> allPlatformMessages = [];
 
-    if (mounted) {
-      setState(() => _isLoading = false);
+      for (final platform in ['facebook', 'instagram']) {
+        if (SocialMediaServiceFactory.isPlatformSupported(platform)) {
+          try {
+            final service = SocialMediaServiceFactory.getService(platform);
+            final messages = await service.getMessages(limit: 50);
+            allPlatformMessages.addAll(messages);
+          } catch (e) {
+            print('Error loading messages from $platform: $e');
+          }
+        }
+      }
+
+      allPlatformMessages
+          .sort((a, b) => b.timestamp.compareTo(a.timestamp));
+
+      if (mounted) {
+        setState(() {
+          _allMessages = allPlatformMessages;
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      print('Error loading messages: $e');
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
     }
   }
 
   Future<void> _refreshMessages() async {
     setState(() => _isRefreshing = true);
 
-    // Simulate refresh API call
-    await Future.delayed(const Duration(seconds: 1));
+    await _loadMessages();
 
     if (mounted) {
       setState(() => _isRefreshing = false);
@@ -184,8 +155,7 @@ class _MessagesInboxState extends State<MessagesInbox>
 
   void _selectAllMessages() {
     setState(() {
-      _selectedMessages =
-          _filteredMessages.map((m) => m['id'] as String).toSet();
+      _selectedMessages = _filteredMessages.map((m) => m.id).toSet();
     });
     HapticFeedback.lightImpact();
   }
@@ -341,9 +311,7 @@ class _MessagesInboxState extends State<MessagesInbox>
           final messageCount = platform == 'all'
               ? _allMessages.length
               : _allMessages
-                  .where((m) =>
-                      (m['platform'] as String).toLowerCase() ==
-                      platform.toLowerCase())
+                  .where((m) => m.platform.toLowerCase() == platform.toLowerCase())
                   .length;
 
           return PlatformFilterChipWidget(
@@ -381,7 +349,7 @@ class _MessagesInboxState extends State<MessagesInbox>
         itemCount: _filteredMessages.length,
         itemBuilder: (context, index) {
           final message = _filteredMessages[index];
-          final messageId = message['id'] as String;
+          final messageId = message.id;
           final isSelected = _selectedMessages.contains(messageId);
 
           return GestureDetector(
@@ -394,7 +362,7 @@ class _MessagesInboxState extends State<MessagesInbox>
             child: Stack(
               children: [
                 MessageCardWidget(
-                  message: message,
+                  message: message.toMap(),
                   onTap: () {
                     if (_isBulkMode) {
                       _toggleMessageSelection(messageId);
@@ -403,8 +371,7 @@ class _MessagesInboxState extends State<MessagesInbox>
                       HapticFeedback.lightImpact();
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(
-                          content:
-                              Text('เปิดการสนทนากับ ${message['senderName']}'),
+                          content: Text('เปิดการสนทนากับ ${message.senderName}'),
                           behavior: SnackBarBehavior.floating,
                         ),
                       );
@@ -414,7 +381,7 @@ class _MessagesInboxState extends State<MessagesInbox>
                     HapticFeedback.lightImpact();
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
-                        content: Text('ตอบกลับ ${message['senderName']}'),
+                        content: Text('ตอบกลับ ${message.senderName}'),
                         behavior: SnackBarBehavior.floating,
                       ),
                     );
@@ -423,8 +390,7 @@ class _MessagesInboxState extends State<MessagesInbox>
                     HapticFeedback.lightImpact();
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
-                        content:
-                            Text('เก็บถาวรข้อความจาก ${message['senderName']}'),
+                        content: Text('เก็บถาวรข้อความจาก ${message.senderName}'),
                         behavior: SnackBarBehavior.floating,
                       ),
                     );
@@ -433,7 +399,7 @@ class _MessagesInboxState extends State<MessagesInbox>
                     HapticFeedback.mediumImpact();
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
-                        content: Text('ลบข้อความจาก ${message['senderName']}'),
+                        content: Text('ลบข้อความจาก ${message.senderName}'),
                         behavior: SnackBarBehavior.floating,
                       ),
                     );
